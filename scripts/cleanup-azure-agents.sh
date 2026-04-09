@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Required inputs
 ORG_URL="${AZDO_ORG_URL:?AZDO_ORG_URL is required}"
 PAT_TOKEN="${AZDO_PAT:?AZDO_PAT is required}"
 API_VERSION="7.1-preview.1"
 
+# Optional tuning
 MAX_INACTIVE_DAYS="${MAX_INACTIVE_DAYS:-30}"
 IGNORE_POOL_NAMES="${IGNORE_POOL_NAMES:-}"
 IGNORE_POOL_PREFIX="${IGNORE_POOL_PREFIX:-}"
 
-ENCODED_PAT=$(printf ":%s" "$PAT_TOKEN" | base64)
+# Normalize ORG_URL (remove trailing slash)
+ORG_URL="${ORG_URL%/}"
+
+# Encode PAT safely (avoid newline issues)
+ENCODED_PAT=$(printf ":%s" "$PAT_TOKEN" | base64 | tr -d '\n')
+
 now_epoch=$(date +%s)
 
 IFS=',' read -r -a IGNORE_POOL_NAMES_ARR <<< "$IGNORE_POOL_NAMES"
@@ -21,9 +28,16 @@ log() {
 call_api() {
   local method="$1"
   local url="$2"
-  curl -sS -X "$method" \
+
+  log "API CALL: $method $url"
+
+  curl --fail-with-body -sS \
+    -X "$method" \
     -H "Authorization: Basic $ENCODED_PAT" \
     -H "Content-Type: application/json" \
+    --connect-timeout 15 \
+    --retry 3 \
+    --retry-delay 2 \
     "$url"
 }
 
@@ -44,7 +58,18 @@ should_ignore_pool() {
   return 1
 }
 
+# --- VALIDATION ---
+if [[ ! "$ORG_URL" =~ ^https:// ]]; then
+  log "ERROR: ORG_URL must start with https://"
+  exit 1
+fi
+
+log "Using ORG_URL=$ORG_URL"
+log "Max inactive days=$MAX_INACTIVE_DAYS"
+
+# --- MAIN ---
 log "Fetching agent pools..."
+
 pools_json=$(call_api GET "$ORG_URL/_apis/distributedtask/pools?api-version=$API_VERSION")
 
 echo "$pools_json" | jq -c '.value[]' | while read -r pool; do
@@ -67,7 +92,7 @@ echo "$pools_json" | jq -c '.value[]' | while read -r pool; do
     last_online_time=$(echo "$agent" | jq -r '.lastOnlineOn // empty')
 
     if [[ -n "$last_online_time" ]]; then
-      last_online_epoch=$(date -d "$last_online_time" +%s || echo "$now_epoch")
+      last_online_epoch=$(date -d "$last_online_time" +%s 2>/dev/null || echo "$now_epoch")
       diff_days=$(( (now_epoch - last_online_epoch) / 86400 ))
     else
       diff_days="$MAX_INACTIVE_DAYS"
