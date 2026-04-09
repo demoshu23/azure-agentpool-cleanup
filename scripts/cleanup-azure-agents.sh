@@ -1,46 +1,83 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Required inputs
+# =========================
+# REQUIRED INPUTS
+# =========================
 ORG_URL="${AZDO_ORG_URL:?AZDO_ORG_URL is required}"
 PAT_TOKEN="${AZDO_PAT:?AZDO_PAT is required}"
 API_VERSION="7.1-preview.1"
 
-# Optional tuning
+# =========================
+# OPTIONAL CONFIG
+# =========================
 MAX_INACTIVE_DAYS="${MAX_INACTIVE_DAYS:-30}"
 IGNORE_POOL_NAMES="${IGNORE_POOL_NAMES:-}"
 IGNORE_POOL_PREFIX="${IGNORE_POOL_PREFIX:-}"
 
-# Normalize ORG_URL (remove trailing slash)
+# Normalize URL
 ORG_URL="${ORG_URL%/}"
 
-# Encode PAT safely (avoid newline issues)
-ENCODED_PAT=$(printf ":%s" "$PAT_TOKEN" | base64 | tr -d '\n')
+# Encode PAT safely (fix newline bug)
+ENCODED_PAT=$(printf ":%s" "$PAT_TOKEN" | base64 | tr -d '\r\n')
 
 now_epoch=$(date +%s)
 
 IFS=',' read -r -a IGNORE_POOL_NAMES_ARR <<< "$IGNORE_POOL_NAMES"
 
+# =========================
+# LOGGING
+# =========================
 log() {
   echo "[$(date -Iseconds)] $*"
 }
 
+# =========================
+# API CALL WITH VALIDATION
+# =========================
 call_api() {
   local method="$1"
   local url="$2"
 
   log "API CALL: $method $url"
 
-  curl --fail-with-body -sS \
+  response=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
     -X "$method" \
     -H "Authorization: Basic $ENCODED_PAT" \
     -H "Content-Type: application/json" \
     --connect-timeout 15 \
     --retry 3 \
     --retry-delay 2 \
-    "$url"
+    "$url")
+
+  body=$(echo "$response" | sed -e 's/HTTP_STATUS:.*//g')
+  status=$(echo "$response" | tr -d '\n' | sed -e 's/.*HTTP_STATUS://')
+
+  log "HTTP Status: $status"
+
+  if [[ "$status" -ne 200 ]]; then
+    log "ERROR: API call failed"
+    echo "---- RESPONSE START ----"
+    echo "$body"
+    echo "---- RESPONSE END ----"
+    exit 1
+  fi
+
+  # Validate JSON BEFORE jq touches it
+  if ! echo "$body" | jq . >/dev/null 2>&1; then
+    log "ERROR: Invalid JSON response"
+    echo "---- RAW RESPONSE START ----"
+    echo "$body"
+    echo "---- RAW RESPONSE END ----"
+    exit 1
+  fi
+
+  echo "$body"
 }
 
+# =========================
+# IGNORE LOGIC
+# =========================
 should_ignore_pool() {
   local pool_name="$1"
 
@@ -58,7 +95,9 @@ should_ignore_pool() {
   return 1
 }
 
-# --- VALIDATION ---
+# =========================
+# VALIDATION
+# =========================
 if [[ ! "$ORG_URL" =~ ^https:// ]]; then
   log "ERROR: ORG_URL must start with https://"
   exit 1
@@ -67,7 +106,9 @@ fi
 log "Using ORG_URL=$ORG_URL"
 log "Max inactive days=$MAX_INACTIVE_DAYS"
 
-# --- MAIN ---
+# =========================
+# MAIN EXECUTION
+# =========================
 log "Fetching agent pools..."
 
 pools_json=$(call_api GET "$ORG_URL/_apis/distributedtask/pools?api-version=$API_VERSION")
