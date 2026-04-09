@@ -1,45 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# =========================
-# REQUIRED INPUTS
-# =========================
 ORG_URL="${AZDO_ORG_URL:?AZDO_ORG_URL is required}"
 PAT_TOKEN="${AZDO_PAT:?AZDO_PAT is required}"
 API_VERSION="7.1-preview.1"
 
-# =========================
-# OPTIONAL CONFIG
-# =========================
 MAX_INACTIVE_DAYS="${MAX_INACTIVE_DAYS:-30}"
 IGNORE_POOL_NAMES="${IGNORE_POOL_NAMES:-}"
 IGNORE_POOL_PREFIX="${IGNORE_POOL_PREFIX:-}"
 
-# Normalize URL
 ORG_URL="${ORG_URL%/}"
-
-# Encode PAT safely (fix newline bug)
 ENCODED_PAT=$(printf ":%s" "$PAT_TOKEN" | base64 | tr -d '\r\n')
 
 now_epoch=$(date +%s)
-
 IFS=',' read -r -a IGNORE_POOL_NAMES_ARR <<< "$IGNORE_POOL_NAMES"
 
-# =========================
-# LOGGING
-# =========================
 log() {
   echo "[$(date -Iseconds)] $*"
 }
 
-# =========================
-# API CALL WITH VALIDATION
-# =========================
 call_api() {
   local method="$1"
   local url="$2"
-
-  log "API CALL: $method $url"
 
   response=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" \
     -X "$method" \
@@ -53,72 +35,49 @@ call_api() {
   body=$(echo "$response" | sed -e 's/HTTP_STATUS:.*//g')
   status=$(echo "$response" | tr -d '\n' | sed -e 's/.*HTTP_STATUS://')
 
-  log "HTTP Status: $status"
+  log "HTTP $method $url -> $status"
 
   if [[ "$status" -ne 200 ]]; then
-    log "ERROR: API call failed"
-    echo "---- RESPONSE START ----"
+    log "ERROR: API failed"
     echo "$body"
-    echo "---- RESPONSE END ----"
     exit 1
   fi
 
-  # Validate JSON BEFORE jq touches it
-  if ! echo "$body" | jq . >/dev/null 2>&1; then
-    log "ERROR: Invalid JSON response"
-    echo "---- RAW RESPONSE START ----"
+  # Validate JSON strictly
+  echo "$body" | jq . >/dev/null 2>&1 || {
+    log "ERROR: Invalid JSON from API"
     echo "$body"
-    echo "---- RAW RESPONSE END ----"
     exit 1
-  fi
+  }
 
   echo "$body"
 }
 
-# =========================
-# IGNORE LOGIC
-# =========================
 should_ignore_pool() {
   local pool_name="$1"
 
-  if [[ -n "$IGNORE_POOL_PREFIX" && "$pool_name" == "$IGNORE_POOL_PREFIX"* ]]; then
-    return 0
-  fi
+  [[ -n "$IGNORE_POOL_PREFIX" && "$pool_name" == "$IGNORE_POOL_PREFIX"* ]] && return 0
 
   for n in "${IGNORE_POOL_NAMES_ARR[@]}"; do
-    [[ -z "$n" ]] && continue
-    if [[ "$pool_name" == "$n" ]]; then
-      return 0
-    fi
+    [[ -n "$n" && "$pool_name" == "$n" ]] && return 0
   done
 
   return 1
 }
 
-# =========================
-# VALIDATION
-# =========================
-if [[ ! "$ORG_URL" =~ ^https:// ]]; then
-  log "ERROR: ORG_URL must start with https://"
-  exit 1
-fi
-
-log "Using ORG_URL=$ORG_URL"
-log "Max inactive days=$MAX_INACTIVE_DAYS"
-
-# =========================
-# MAIN EXECUTION
-# =========================
 log "Fetching agent pools..."
 
 pools_json=$(call_api GET "$ORG_URL/_apis/distributedtask/pools?api-version=$API_VERSION")
 
-echo "$pools_json" | jq -c '.value[]' | while read -r pool; do
-  pool_id=$(echo "$pool" | jq -r '.id')
-  pool_name=$(echo "$pool" | jq -r '.name')
+# SAFE iteration (no pipe!)
+mapfile -t pools < <(echo "$pools_json" | jq -c '.value[]')
+
+for pool in "${pools[@]}"; do
+  pool_id=$(jq -r '.id' <<< "$pool")
+  pool_name=$(jq -r '.name' <<< "$pool")
 
   if should_ignore_pool "$pool_name"; then
-    log "Skipping pool '$pool_name' due to policy"
+    log "Skipping pool '$pool_name'"
     continue
   fi
 
@@ -126,11 +85,13 @@ echo "$pools_json" | jq -c '.value[]' | while read -r pool; do
 
   agents_json=$(call_api GET "$ORG_URL/_apis/distributedtask/pools/$pool_id/agents?includeCapabilities=true&includeAssignedRequest=true&api-version=$API_VERSION")
 
-  echo "$agents_json" | jq -c '.value[]' | while read -r agent; do
-    agent_id=$(echo "$agent" | jq -r '.id')
-    agent_name=$(echo "$agent" | jq -r '.name')
-    status=$(echo "$agent" | jq -r '.status')
-    last_online_time=$(echo "$agent" | jq -r '.lastOnlineOn // empty')
+  mapfile -t agents < <(echo "$agents_json" | jq -c '.value[]')
+
+  for agent in "${agents[@]}"; do
+    agent_id=$(jq -r '.id' <<< "$agent")
+    agent_name=$(jq -r '.name' <<< "$agent")
+    status=$(jq -r '.status' <<< "$agent")
+    last_online_time=$(jq -r '.lastOnlineOn // empty' <<< "$agent")
 
     if [[ -n "$last_online_time" ]]; then
       last_online_epoch=$(date -d "$last_online_time" +%s 2>/dev/null || echo "$now_epoch")
@@ -140,10 +101,10 @@ echo "$pools_json" | jq -c '.value[]' | while read -r pool; do
     fi
 
     if [[ "$status" == "offline" && "$diff_days" -ge "$MAX_INACTIVE_DAYS" ]]; then
-      log "Deleting stale agent '$agent_name' (inactive ${diff_days}d)"
+      log "Deleting agent '$agent_name' (${diff_days}d inactive)"
       call_api DELETE "$ORG_URL/_apis/distributedtask/pools/$pool_id/agents/$agent_id?api-version=$API_VERSION" >/dev/null
     else
-      log "Keeping agent '$agent_name' (inactive ${diff_days}d)"
+      log "Keeping agent '$agent_name' (${diff_days}d inactive)"
     fi
   done
 
@@ -153,7 +114,7 @@ echo "$pools_json" | jq -c '.value[]' | while read -r pool; do
     log "Deleting empty pool '$pool_name'"
     call_api DELETE "$ORG_URL/_apis/distributedtask/pools/$pool_id?api-version=$API_VERSION" >/dev/null
   else
-    log "Pool '$pool_name' still has $remaining agents"
+    log "Pool '$pool_name' has $remaining agents"
   fi
 done
 
