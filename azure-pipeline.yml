@@ -1,0 +1,36 @@
+trigger: none
+
+schedules:
+  - cron: "0 3 * * *"
+    displayName: Nightly Azure Agent Cleanup
+    branches:
+      include:
+        - main
+    always: true
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+- group: agent-cleanup-settings   # <‑‑ Azure Library Group
+
+steps:
+  - task: Bash@3
+    displayName: Cleanup stale Azure DevOps agent pools/agents
+    env:
+      AZDO_ORG_URL: $(AZDO_ORG_URL)
+      AZDO_PAT: $(AZDO_PAT)
+      MAX_INACTIVE_DAYS: $(MAX_INACTIVE_DAYS)
+      IGNORE_POOL_NAMES: $(IGNORE_POOL_NAMES)
+      IGNORE_POOL_PREFIX: $(IGNORE_POOL_PREFIX)
+    inputs:
+      targetType: 'filePath'
+      filePath: 'scripts/cleanup-azure-agents.sh'
+
+  # Optional: publish script as artifact for audit/compliance
+  - task: PublishPipelineArtifact@1
+    displayName: Publish cleanup script artifact
+    inputs:
+      targetPath: 'scripts'
+      artifact: 'cleanup-script'
+      publishLocation: 'pipeline'
