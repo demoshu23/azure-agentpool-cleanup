@@ -1,0 +1,25 @@
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+- group: azure-agent-pool-catalogue
+
+steps:
+- checkout: self
+
+- task: Bash@3
+  displayName: Generate Azure agent pool catalogue
+  inputs:
+    targetType: inline
+    script: |
+      chmod +x ./azure-agent-pool-catalogue.sh
+      ./azure-agent-pool-catalogue.sh
+
+- task: PublishBuildArtifacts@1
+  displayName: Publish agent pool catalogue artifacts
+  inputs:
+    PathtoPublish: 'agent-pool-catalogue'
+    ArtifactName: 'agent-pool-catalogue'
+    publishLocation: 'Container'
