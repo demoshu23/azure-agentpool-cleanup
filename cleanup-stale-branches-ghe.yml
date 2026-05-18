@@ -1,21 +1,69 @@
+# trigger:
+#   branches:
+#     include:
+#       - main
+
+# # Load Azure DevOps Library Group
+# variables:
+#   - group: azure-agent-pool-catalogue
+
+# pool:
+#   vmImage: ubuntu-latest
+
+# steps:
+#   # Ensure repo is checked out (including repos.txt + script)
+#   - checkout: self
+#     fetchDepth: 1
+
+#   # Install GitHub CLI + jq
+#   - script: |
+#       echo "Installing dependencies..."
+#       sudo apt-get update -y
+#       sudo apt-get install -y jq
+#       if ! command -v gh >/dev/null; then
+#         sudo apt-get install -y gh
+#       fi
+#     displayName: "Install GitHub CLI & jq"
+
+#   # Make script executable
+#   - script: |
+#       chmod +x cleanup-stale-branches-ghe.sh
+#     displayName: "Make cleanup script executable"
+
+#   # Run cleanup script
+#   - script: |
+#       echo "Running stale branch cleanup..."
+#       ./cleanup-stale-branches-ghe.sh
+#     displayName: "Execute cleanup-stale-branches-ghe.sh"
+#     env:
+#       GHE_API_URL: $(GHE_API_URL)
+#       GHE_PAT: $(GHE_PAT)
+#       GHE_ORG: $(GHE_ORG)
+#       STALE_THRESHOLD: $(STALE_THRESHOLD)
+#       DRY_RUN: $(DRY_RUN)
 trigger:
   branches:
     include:
       - main
 
-# Load Azure DevOps Library Group
 variables:
-  - group: azure-agent-pool-catalogue
+  - group: azure-agent-pool-catalogue  # Your Azure Library Group
 
 pool:
-  vmImage: ubuntu-latest
+  name: dev-agentpool
 
 steps:
-  # Ensure repo is checked out (including repos.txt + script)
   - checkout: self
     fetchDepth: 1
 
-  # Install GitHub CLI + jq
+  # Debug: Show directory structure so we know where the script is
+  - script: |
+      echo "=== Directory Structure ==="
+      pwd
+      ls -R .
+    displayName: "Debug: List repo contents"
+
+  # Ensure GitHub CLI + jq are installed
   - script: |
       echo "Installing dependencies..."
       sudo apt-get update -y
@@ -25,10 +73,22 @@ steps:
       fi
     displayName: "Install GitHub CLI & jq"
 
-  # Make script executable
+  # Validate script exists before chmod
   - script: |
+      if [[ ! -f "./cleanup-stale-branches-ghe.sh" ]]; then
+        echo "ERROR: cleanup-stale-branches-ghe.sh not found in repo root."
+        exit 1
+      fi
       chmod +x cleanup-stale-branches-ghe.sh
-    displayName: "Make cleanup script executable"
+    displayName: "Validate & chmod cleanup script"
+
+  # Validate repos.txt exists
+  - script: |
+      if [[ ! -f "./repos.txt" ]]; then
+        echo "ERROR: repos.txt not found in repo root."
+        exit 1
+      fi
+    displayName: "Validate repos.txt"
 
   # Run cleanup script
   - script: |
