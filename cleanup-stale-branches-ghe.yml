@@ -33,7 +33,7 @@
 #   # Run cleanup script
 #   - script: |
 #       echo "Running stale branch cleanup..."
-#       ./cleanup-stale-branches-ghe.sh
+#       ./scripts/cleanup-stale-branches-ghe.sh
 #     displayName: "Execute cleanup-stale-branches-ghe.sh"
 #     env:
 #       GHE_API_URL: $(GHE_API_URL)
@@ -75,7 +75,7 @@ steps:
 
   # Validate script exists before chmod
   - script: |
-      if [[ ! -f "./cleanup-stale-branches-ghe.sh" ]]; then
+      if [[ ! -f "./scripts/cleanup-stale-branches-ghe.sh" ]]; then
         echo "ERROR: cleanup-stale-branches-ghe.sh not found in repo root."
         exit 1
       fi
@@ -93,7 +93,7 @@ steps:
   # Run cleanup script
   - script: |
       echo "Running stale branch cleanup..."
-      ./cleanup-stale-branches-ghe.sh
+      ./scripts/cleanup-stale-branches-ghe.sh
     displayName: "Execute cleanup-stale-branches-ghe.sh"
     env:
       GHE_API_URL: $(GHE_API_URL)
