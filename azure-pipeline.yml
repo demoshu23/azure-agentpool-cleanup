@@ -34,3 +34,18 @@ steps:
       targetPath: 'scripts'
       artifact: 'cleanup-script'
       publishLocation: 'pipeline'
+
+apiVersion: fluentbit.fluent.io/v1alpha2
+kind: ClusterInput
+metadata:
+  name: mongodb-audit-input
+spec:
+  tail:
+    tag: mongodb.audit
+    path: /opt/mongodb/logs/audit.log
+    parser: json
+    memBufLimit: 50MB
+    skipLongLines: true
+    refreshIntervalseconds: 10
+    db: /var/lib/fluent-bit/mongodb-audit.db
+
