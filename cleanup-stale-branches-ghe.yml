@@ -64,14 +64,14 @@ steps:
     displayName: "Debug: List repo contents"
 
   # Ensure GitHub CLI + jq are installed
-  - script: |
-      echo "Installing dependencies..."
-      sudo apt-get update -y
-      sudo apt-get install -y jq
-      if ! command -v gh >/dev/null; then
-        sudo apt-get install -y gh
-      fi
-    displayName: "Install GitHub CLI & jq"
+  # - script: |
+  #     echo "Installing dependencies..."
+  #     sudo apt-get update -y
+  #     sudo apt-get install -y jq
+  #     if ! command -v gh >/dev/null; then
+  #       sudo apt-get install -y gh
+  #     fi
+  #   displayName: "Install GitHub CLI & jq"
 
   # Validate script exists before chmod
   - script: |
